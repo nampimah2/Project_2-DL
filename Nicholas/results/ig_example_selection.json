@@ -1,0 +1,24 @@
+{
+  "selected_model": "deep_lr0.001_drop0.3",
+  "selection_rule": "Within one shared true class, select highest-confidence correct, lowest-confidence correct, and highest-confidence incorrect examples when available.",
+  "examples": {
+    "high_confidence_correct": {
+      "index": 9226,
+      "true_class": "apple",
+      "predicted_class": "apple",
+      "confidence": 0.9997863173484802
+    },
+    "low_confidence_correct": {
+      "index": 7870,
+      "true_class": "apple",
+      "predicted_class": "apple",
+      "confidence": 0.33920156955718994
+    },
+    "high_confidence_misclassified": {
+      "index": 8905,
+      "true_class": "apple",
+      "predicted_class": "pear",
+      "confidence": 0.9137982726097107
+    }
+  }
+}

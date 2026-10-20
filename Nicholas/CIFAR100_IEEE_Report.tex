@@ -1,0 +1,156 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{amsmath,amssymb,graphicx,booktabs,url}
+\usepackage[T1]{fontenc}
+\usepackage{cite,capt-of}
+\begin{document}
+\title{Comparing Compact and Deep Convolutional Networks for CIFAR-100 Classification}
+\author{\IEEEauthorblockN{Yin Po Po Aung, Jane Ohia, and Nicholas Ampimah}\IEEEauthorblockA{University of Nebraska--Lincoln}}
+\maketitle
+\begin{abstract}
+We compare two convolutional networks trained from scratch on CIFAR-100, each using two joint learning-rate and regularization settings. Training uses a stratified 45,000/5,000 training/validation split, Adam, augmentation, dropout, L2, and early stopping. The validation-selected deeper model achieves 61.24\% top-1 accuracy (95\% Wilson interval: 60.28--62.19\%) and 87.47\% top-5 accuracy on 10,000 held-out images, exceeding the corresponding compact model by 24.00 top-1 percentage points. Confusion and Integrated Gradients reveal uneven discrimination and a confident apple-to-pear error. Additional capacity helps within this grid; the joint lower-learning-rate, stronger-regularization setting performs worse.
+
+\end{abstract}
+\begin{IEEEkeywords}
+CIFAR-100, convolutional networks, regularization, confidence intervals, Integrated Gradients
+\end{IEEEkeywords}
+
+\section{Introduction}
+CIFAR-100 requires distinguishing 100 categories from low-resolution images, including visually similar objects \cite{cifar}. We compare compact and deeper, wider CNNs to test feature capacity, and evaluate two optimization/regularization settings. Validation-selected Deep A achieves 61.24\% top-1 and 87.47\% top-5 accuracy. Its 24.00-point advantage over Compact A motivates the larger model, while confusion and attribution analyses expose errors hidden by aggregate accuracy.
+
+\section{Problem and Experimental Protocol}
+\subsection{Inputs, outputs, and objective}
+Each input is $x\in[0,1]^{32\times32\times3}$, batched in NHWC form as $X\in\mathbb{R}^{N\times32\times32\times3}$. Integer fine-class labels become one-hot vectors $y\in\{0,1\}^{100}$. The network returns softmax probabilities $p_\theta(x)$ over 100 classes; the prediction is $\arg\max_k p_{\theta,k}(x)$. Training minimizes
+\begin{equation}
+\mathcal{L}(\theta)=-\frac{1}{B}\sum_{i=1}^{B}\sum_{k=1}^{100}y_{ik}\log p_{\theta,k}(x_i)
++\lambda\sum_{W\in\mathcal{R}}\|W\|_F^2,
+\end{equation}
+where $\mathcal{R}$ contains convolutional and hidden dense kernels. The final softmax kernel has no explicit L2 penalty in the submitted implementation. Reported Keras loss includes the regularization term.
+
+\subsection{Data preparation and partitioning}
+TensorFlow Datasets supplies 50,000 training and 10,000 test images \cite{cifar}. A seed-42 stratified split leaves 45,000 training and 5,000 validation images: 450/50/100 images per class for training/validation/test. Pixels are divided by 255. Training images are zero-padded to $40\times40$, randomly cropped to $32\times32$, and horizontally flipped, encouraging position/orientation tolerance. Validation/test images receive scaling only. No pretrained weights are used.
+
+\subsection{Architectures and design rationale}
+Table~\ref{tab:architecture} describes both networks. Convolutions use $3\times3$ kernels, stride 1, same padding, no bias, batch normalization (BN), and ReLU. Pooling is $2\times2$ max pooling with stride 2. A/B share each architecture, differing only in training settings.
+
+\begin{table}[!ht]
+\caption{Architecture sequences and output shapes (batch omitted). $C_f$: convolution with $f$ filters + BN + ReLU; P: max pooling; D: dropout; GAP: global average pooling. $d=0.30$ for A and $0.50$ for B.}
+\label{tab:architecture}
+\centering\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Stage & Compact & Deep\\
+\midrule
+Input & $32\times32\times3$ & $32\times32\times3$\\
+1 & $C_{32}, C_{32}$ & $C_{32}, C_{32}$\\
+ & P, D($d/2$) & P, D($d/2$)\\
+Output & $16\times16\times32$ & $16\times16\times32$\\
+2 & $C_{64}$, P, D($d$) & $C_{64}, C_{64}$, P, D($d/2$)\\
+Output & $8\times8\times64$ & $8\times8\times64$\\
+3 & --- & $C_{128}, C_{128}$, P, D($d/2$)\\
+Output & $8\times8\times64$ & $4\times4\times128$\\
+Aggregation & GAP: 64 & GAP: 128\\
+Hidden & Dense 128, ReLU, D($d$) & Dense 256, ReLU, D($d$)\\
+Classifier & Dense 100, softmax & Dense 100, softmax\\
+Total params & 50,244 & 347,076\\
+Trainable params & 49,988 & 346,180\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Small kernels compose features; pooling reduces spatial cost, GAP limits dense parameters, and BN supports optimization. The deep model has about 6.9 times more parameters, trading computation for capacity.
+
+\subsection{Training and hyperparameter choices}
+Both networks use Adam with batch size 128. Setting A uses initial learning rate $10^{-3}$, dropout $d=0.30$, and $\lambda=10^{-4}$; B uses $3\times10^{-4}$, $d=0.50$, and $\lambda=5\times10^{-4}$. A tests faster learning with moderate regularization; B tests smaller updates and stronger constraints. Compact dropout is $d/2$ after pooling 1, $d$ after pooling 2, and $d$ after the hidden dense layer. Deep dropout is $d/2$ after each pool and $d$ after its hidden dense layer.
+
+Training is capped at 100 epochs. Early stopping monitors validation loss with patience 8, minimum improvement $10^{-4}$, and restored weights. Plateau scheduling halves the learning rate after four epochs, down to $10^{-6}$. Lowest-validation-loss checkpoints determine selection; all runs use seed 42 without repeated-seed trials.
+\twocolumn[{
+\begin{minipage}{\textwidth}
+\captionof{table}{Held-out results. A/B denote the joint settings defined in Section II. Confidence intervals (CI) are 95\% Wilson intervals; all percentages use 10,000 test images. Loss includes L2.}
+\label{tab:results}
+\centering\small
+\begin{tabular}{lrrrrrrr}
+\toprule
+Model & Epochs / best & Min. val. loss & Test loss & Top-1 (\%) & Top-1 CI (\%) & Error CI (\%) & Top-5 (\%)\\
+\midrule
+Compact A & 66 / 58 & 2.4481 & 2.4391 & 37.24 & [36.30, 38.19] & [61.81, 63.70] & 70.43\\
+Compact B & 100 / 96 & 2.8523 & 2.8528 & 29.05 & [28.17, 29.95] & [70.05, 71.83] & 61.46\\
+\textbf{Deep A} & \textbf{81 / 73} & \textbf{1.5585} & \textbf{1.5388} & \textbf{61.24} & \textbf{[60.28, 62.19]} & \textbf{[37.81, 39.72]} & \textbf{87.47}\\
+Deep B & 99 / 91 & 1.7808 & 1.7613 & 55.92 & [54.94, 56.89] & [43.11, 45.06] & 84.61\\
+\bottomrule
+\end{tabular}
+\end{minipage}\vspace{5pt}
+
+\begin{minipage}{\textwidth}
+\centering
+\includegraphics[width=.53\textwidth]{figures/training_curves.pdf}\hfill
+\includegraphics[width=.45\textwidth]{figures/normalized_confusion_matrix.png}
+\captionof{figure}{Left: training (solid) and validation (dashed) loss and accuracy for both architectures and settings. Right: the selected Deep A model's full $100\times100$ row-normalized test confusion matrix (true class on rows, prediction on columns). Class names are retained in the editable package's full-resolution image; each diagonal cell is class recall.}
+\label{fig:trainingcm}
+\end{minipage}
+
+\vspace{10pt}}]
+\section{Results and Model Comparison}
+\subsection{Performance indicators and confidence intervals}
+Top-1 accuracy measures exact classification, while top-5 measures whether the true label is among the five largest probabilities. Error is $1-\text{accuracy}$. For $n=10,000$ test images and observed proportion $\hat p$, the 95\% Wilson interval is
+\begin{equation}
+\frac{\hat p+z^2/(2n)\ \pm\ z\sqrt{\hat p(1-\hat p)/n+z^2/(4n^2)}}{1+z^2/n},
+\end{equation}
+where $z=1.96$. Applying it to correct or incorrect predictions yields accuracy or generalization-error intervals. These describe approximate independent-test-sample uncertainty conditional on a fitted model, not seed-to-seed variability or paired differences between models.
+
+\subsection{Best model and architecture effect}
+Deep A has the lowest validation loss (1.5585) and the best test results: 6,124 correct predictions, 61.24\% top-1 accuracy, 38.76\% error (95\% CI: 37.81--39.72\%), and 87.47\% top-5 accuracy. The 26.23-point top-5/top-1 gap indicates many missed labels remain highly ranked. The deep model improves top-1 accuracy over compact by 24.00 points under A and 26.87 under B. This supports the larger architecture within this grid; depth, width, dense size, and dropout placement differ, preventing attribution to depth alone.
+
+\subsection{Hyperparameters and learning behavior}
+B lowers top-1 accuracy by 8.19 points for compact and 5.32 for deep. Its larger losses include larger L2 penalties. Jointly changing learning rate, dropout, and L2 prevents separating their effects.
+
+Deep A's best-epoch training/validation accuracy is 63.89/61.04\%, with losses 1.3763/1.5585. This modest gap is consistent with some overfitting, but augmentation and dropout operate only during training. Compact B's 24.45/29.30\% training/validation accuracy instead suggests constrained learning or incomplete optimization. Different evaluation conditions can make validation accuracy higher.
+
+Three runs stop eight epochs after their best checkpoints. Compact B reaches the 100-epoch cap only four epochs after its best checkpoint (96); continuing it is needed to satisfy the full stopping window.
+
+\subsection{Normalized confusion}
+The matrix uses $\widetilde C_{ij}=C_{ij}/\sum_j C_{ij}$; rows sum to one and diagonal values are class recall. Each class has 100 test images, so one count contributes 0.01. The uneven diagonal shows variable discrimination: motorcycle and orange appear stronger than otter and boy. Maple-tree/oak-tree off-diagonal responses illustrate residual confusion. These are qualitative readings; numerical counts are absent. Balanced test classes make mean recall equal overall accuracy.
+\clearpage
+
+\section{Integrated Gradients Analysis}
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=.88\columnwidth]{figures/integrated_gradients_examples.png}
+\caption{Deep A attribution examples from the shared true class apple. Rows: highest-confidence correct (99.98\%), lowest-confidence correct (33.92\%), and highest-confidence incorrect, predicted pear (91.38\%). Columns show image, normalized absolute IG magnitude, and overlay. Attribution targets the predicted class in each row.}
+\label{fig:ig}
+\end{figure}
+
+\subsection{Method and explicit selection criteria}
+Integrated Gradients (IG) attributes a target output to input pixels by integrating gradients between a reference image and the observed image \cite{ig}. The submitted implementation uses a black baseline $x'=0$, the predicted-class softmax probability $F_c$, and 64 trapezoidal integration intervals:
+\begin{equation}
+\operatorname{IG}_j(x)=(x_j-x'_j)\int_0^1
+\frac{\partial F_c(x'+\alpha(x-x'))}{\partial x_j}\,d\alpha.
+\end{equation}
+For display, absolute attributions are summed over the three color channels and each image's heatmap is divided by its own maximum. Bright pixels therefore indicate large attribution magnitude relative to that image's map; they do not distinguish positive from negative evidence, and brightness is not comparable across rows.
+
+Selection chooses the first class by ID with two correct predictions and one error (apple), then takes its highest- and lowest-confidence correct predictions and highest-confidence error (indices 9226, 7870, 8905). This rule contrasts confidence and correctness within one class; its extreme cases are diagnostic, not representative.
+
+\subsection{Interpretation of the attribution maps}
+\textit{High-confidence correct apple (99.98\%).} Strong attribution covers parts of the upper fruit surface and left outline; the lower portion is weaker. This suggests localized appearance sensitivity rather than uniform use of the object, without proving an abstract apple representation.
+
+\textit{Low-confidence correct apple (33.92\%).} Several fruits appear among foliage. Separated hotspots near the upper center and lower right overlap fruit regions. Fragmented sensitivity accompanies a less decisive but correct ranking; the map does not prove clutter caused low confidence.
+
+\textit{Confident apple-to-pear error (91.38\%).} The strongest hotspot falls on the central yellow-green fruit region. Shared fruit appearance may contribute, but the map does not establish a specific color/shape mechanism. IG targets the predicted \emph{pear} probability, not the true apple score. Concentrated attribution and high confidence therefore coexist with an incorrect decision.
+
+Absolute maps discard evidence direction, and per-image scaling prevents magnitude comparisons across examples. The black baseline and softmax saturation may affect interpretation. No completeness residual or alternative-baseline analysis is reported. These visualizations support qualitative inspection, not causal localization.
+
+\section{Strengths, Limitations, and Next Steps}
+Strengths include balanced splitting, validation-based selection, four documented runs, and complementary uncertainty, ranking, confusion, and attribution evaluation. Training, networks, and helpers are separated into \texttt{main.py}, \texttt{model.py}, and \texttt{util.py}. Augmentation, dropout, L2, and early stopping address generalization.
+
+Limitations include greater deep-model computation, one seed, jointly varied hyperparameters, and no systematic runtime/memory measurements. Only the selected model has a confusion matrix; Wilson intervals exclude retraining variability. Compact B's stopping window remains incomplete. Future tuning should continue using validation rather than observed test differences.
+
+Next, vary learning rate, dropout, and L2 independently around Deep A, repeat promising settings over seeds, and extend Compact B's cap. Save predictions for per-class and paired comparisons. Signed IG, alternative baselines, and completeness checks would strengthen interpretation. These are proposed extensions.
+
+\section{Conclusion}
+Deep A achieves 61.24\% top-1 accuracy (95\% CI: 60.28--62.19\%) and 87.47\% top-5 accuracy, exceeding Compact A by 24.00 points. The joint stronger-regularization, lower-learning-rate setting performs worse. Confusion and IG reveal ambiguity and a confident fruit-class error, supporting controlled tuning and cautious attribution interpretation.
+
+\begin{thebibliography}{2}
+\bibitem{cifar} A. Krizhevsky, ``Learning multiple layers of features from tiny images,'' University of Toronto, Tech. Rep., 2009. [Online]. Available: \url{https://www.cs.toronto.edu/~kriz/cifar.html}
+\bibitem{ig} M. Sundararajan, A. Taly, and Q. Yan, ``Axiomatic attribution for deep networks,'' in \emph{Proc. ICML}, vol. 70, 2017, pp. 3319--3328.
+\end{thebibliography}
+\end{document}
