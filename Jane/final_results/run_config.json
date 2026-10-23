@@ -1,0 +1,10 @@
+{
+  "output_dir": "results",
+  "epochs": 150,
+  "patience": 8,
+  "batch_size": 128,
+  "threads": 2,
+  "seed": 42,
+  "ig_steps": 64,
+  "limit_configs": 4
+}

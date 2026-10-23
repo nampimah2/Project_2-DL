@@ -1,0 +1,6 @@
+{
+  "run": "deep_lr0.0003_drop0.5",
+  "epochs_completed": 116,
+  "best_epoch": 108,
+  "minimum_validation_loss": 1.7268105745315552
+}
