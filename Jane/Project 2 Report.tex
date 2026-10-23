@@ -1,0 +1,397 @@
+\documentclass[conference]{IEEEtran}
+
+\usepackage{amsmath,amssymb,graphicx,booktabs,url}
+\usepackage[T1]{fontenc}
+\usepackage{cite}
+
+\begin{document}
+
+\title{Comparing Compact and Deep Convolutional Networks for CIFAR-100 Classification}
+
+\author{
+\IEEEauthorblockN{Yin Po Po Aung, Jane Ohia, and Nicholas Ampimah}
+\IEEEauthorblockA{University of Nebraska--Lincoln}
+}
+
+\maketitle
+
+\begin{abstract}
+We investigate convolutional neural networks trained from scratch for fine-grained image classification on CIFAR-100. Two architectures, a compact CNN and a deeper, wider CNN, are evaluated under two joint learning-rate and regularization settings. The data are partitioned into 45,000 training, 5,000 validation, and 10,000 held-out test images using a stratified split. Training uses Adam, data augmentation, batch normalization, dropout, L2 regularization, learning-rate reduction, and validation-loss early stopping with patience 8. The validation-selected Deep A model achieves 61.99\% top-1 test accuracy with a 95\% Wilson confidence interval of 61.03--62.94\%, 38.01\% generalization error with a 95\% interval of 37.06--38.97\%, and 87.81\% top-5 accuracy. Under the same A hyperparameter setting, Deep A exceeds Compact A by 22.08 top-1 percentage points. Normalized confusion matrices show stronger class-wise discrimination for the deep architecture, while Integrated Gradients analysis demonstrates that the model can focus on visually relevant object regions even when making a highly confident fine-grained classification error. Overall, increased model capacity substantially improves CIFAR-100 performance within the tested design space, while the joint lower-learning-rate and stronger-regularization setting reduces performance for both architectures.
+\end{abstract}
+
+\begin{IEEEkeywords}
+CIFAR-100, convolutional neural networks, image classification, regularization, confidence intervals, confusion matrices, Integrated Gradients
+\end{IEEEkeywords}
+
+
+\section{Introduction}
+
+CIFAR-100 is a challenging image-classification benchmark containing 100 fine-grained classes represented by low-resolution $32\times32$ RGB images \cite{cifar}. Many categories share substantial color, shape, texture, and background characteristics, making the dataset useful for studying how model capacity, optimization, and regularization affect generalization.
+
+We train convolutional neural networks from scratch and compare a lower-capacity Compact CNN with a deeper, wider CNN under two joint hyperparameter settings that vary learning rate, dropout, and L2 regularization. The validation-selected Deep A model achieves 61.99\% top-1 and 87.81\% top-5 accuracy on 10,000 held-out test images, with a 95\% Wilson top-1 interval of 61.03--62.94\%. It exceeds Compact A by 22.08 percentage points under the same training setting. Training curves, normalized confusion matrices, confidence intervals, and Integrated Gradients (IG) are used to evaluate generalization and model behavior beyond aggregate accuracy.
+
+
+\section{Problem Formulation and Data}
+
+\subsection{Inputs, outputs, and learning objective}
+
+Each CIFAR-100 image is represented as
+$x\in[0,1]^{32\times32\times3}$ and batches are represented in NHWC form as
+$X\in\mathbb{R}^{N\times32\times32\times3}$.
+Integer class labels are converted to one-hot vectors
+$y\in\{0,1\}^{100}$.
+For input $x$, the network outputs a 100-dimensional softmax probability vector
+$p_{\theta}(x)$ and predicts
+$\hat y=\arg\max_k p_{\theta,k}(x)$.
+
+Because the labels are one-hot encoded, training uses categorical cross-entropy. L2 regularization is included on convolutional and hidden dense kernels, giving the effective training objective
+
+\begin{equation}
+\mathcal{L}(\theta)
+=
+-\frac{1}{B}
+\sum_{i=1}^{B}
+\sum_{k=1}^{100}
+y_{ik}\log p_{\theta,k}(x_i)
++
+\lambda
+\sum_{W\in\mathcal{R}}
+\|W\|_F^2 ,
+\end{equation}
+
+where $B$ is the mini-batch size and $\mathcal{R}$ contains the regularized convolutional and hidden dense weight matrices. The final 100-class softmax layer does not receive an explicit L2 kernel penalty in the submitted implementation. Consequently, reported Keras loss values include both categorical cross-entropy and the applicable regularization penalties.
+
+
+\subsection{Dataset preparation and partitioning}
+
+CIFAR-100 is loaded through TensorFlow Datasets and contains 50,000 designated training images and 10,000 test images \cite{cifar}. The original training set is divided using a deterministic, stratified 90/10 split with random seed 42. This produces 45,000 training images and 5,000 validation images while preserving class balance. Because CIFAR-100 contains 100 balanced classes, the resulting partitions contain 450 training, 50 validation, and 100 test images per class.
+
+Pixel values are converted to floating point and divided by 255 so that each channel lies in $[0,1]$. Data augmentation is applied only during training. Each training image is padded from $32\times32$ to $40\times40$, randomly cropped back to $32\times32$, and randomly flipped horizontally. These transformations expose the model to small spatial and orientation variations without changing the class label and therefore provide additional regularization. Validation and test images receive only the $[0,1]$ scaling. No pretrained network or pretrained weights are used.
+
+
+\section{CNN Architectures and Training Protocol}
+
+\subsection{Architecture design}
+
+Both architectures use $3\times3$ convolutions with stride 1 and same padding. Convolutional layers omit the bias term because batch normalization follows each convolution. Each convolution is followed by batch normalization and a ReLU activation. Max pooling uses $2\times2$ windows and reduces spatial resolution between feature-learning stages.
+
+Table~\ref{tab:architecture} gives the complete network structures. $C_f$ denotes a convolution with $f$ filters followed by batch normalization and ReLU, P denotes max pooling, D denotes dropout, and GAP denotes global average pooling.
+
+\begin{table}[!t]
+\caption{Compact and Deep CNN Architectures}
+\label{tab:architecture}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Stage & Compact & Deep \\
+\midrule
+Input
+& $32\times32\times3$
+& $32\times32\times3$ \\
+
+1
+& $C_{32},C_{32}$
+& $C_{32},C_{32}$ \\
+
+& P, D($d/2$)
+& P, D($d/2$) \\
+
+Output
+& $16\times16\times32$
+& $16\times16\times32$ \\
+
+2
+& $C_{64}$, P, D($d$)
+& $C_{64},C_{64}$, P, D($d/2$) \\
+
+Output
+& $8\times8\times64$
+& $8\times8\times64$ \\
+
+3
+& ---
+& $C_{128},C_{128}$, P, D($d/2$) \\
+
+Output
+& $8\times8\times64$
+& $4\times4\times128$ \\
+
+Aggregation
+& GAP: 64
+& GAP: 128 \\
+
+Hidden
+& Dense 128, ReLU, D($d$)
+& Dense 256, ReLU, D($d$) \\
+
+Classifier
+& Dense 100, softmax
+& Dense 100, softmax \\
+
+Total parameters
+& 50,244
+& 347,076 \\
+
+Trainable parameters
+& 49,988
+& 346,180 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The Compact model contains three convolutional layers and two pooling stages, whereas the Deep model contains six convolutional layers across three pooling stages with channels increasing from 32 to 64 to 128. Deep therefore has approximately 6.9 times more parameters. Small $3\times3$ kernels compose local features, pooling controls spatial cost, BN supports optimization, and GAP limits dense parameters. The deeper model trades additional computation for greater representational capacity.
+
+
+\subsection{Hyperparameters and regularization}
+
+Both networks are optimized using Adam with mini-batches of 128 examples. Two joint hyperparameter settings are evaluated for each architecture:
+
+\begin{table}[!t]
+\caption{Training Hyperparameter Settings}
+\label{tab:hyperparams}
+\centering
+\footnotesize
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Setting & Learning rate & Dropout $d$ & L2 $\lambda$ \\
+\midrule
+A & $1\times10^{-3}$ & 0.30 & $1\times10^{-4}$ \\
+B & $3\times10^{-4}$ & 0.50 & $5\times10^{-4}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Setting A represents faster initial optimization with moderate regularization, whereas B combines a smaller learning rate with stronger dropout and L2 constraints. Compact applies dropout $d/2$ after its first pool and $d$ after its second pool and hidden dense layer; Deep applies $d/2$ after each pooling stage and $d$ after its hidden dense layer.
+
+All four runs use a maximum of 150 epochs. Early stopping monitors validation loss with patience 8, minimum improvement $10^{-4}$, and restoration of the best weights. This exceeds the assignment requirement of a minimum patience of 5. ReduceLROnPlateau additionally halves the learning rate after four epochs without validation-loss improvement, with a lower bound of $10^{-6}$. Best-model checkpoints are determined by validation loss.
+
+The final runs all terminated through the early-stopping protocol before reaching the 150-epoch maximum. Compact A completed 104 epochs with its minimum validation loss at epoch 96; Compact B completed 98 epochs with its best epoch at 90; Deep A completed 108 epochs with its best epoch at 100; and Deep B completed 116 epochs with its best epoch at 108. Thus, every final run continued through the full eight-epoch patience window after its best validation-loss epoch.
+
+
+\section{Experimental Results}
+
+\subsection{Performance measures and confidence intervals}
+
+Top-1 accuracy measures exact classification, while top-5 accuracy measures whether the true label is among the five highest predicted probabilities. Generalization error is $1-\text{accuracy}$.
+
+For an observed binomial success proportion $\hat{p}$ over $n=10,000$ held-out test images, we compute a 95\% Wilson score interval as
+
+\begin{equation}
+\frac{
+\hat{p}+\frac{z^2}{2n}
+\pm
+z\sqrt{
+\frac{\hat{p}(1-\hat{p})}{n}
++
+\frac{z^2}{4n^2}
+}
+}{
+1+\frac{z^2}{n}
+},
+\end{equation}
+
+where $z=1.96$. Applying the interval to correct predictions gives the confidence interval for accuracy; applying it to incorrect predictions gives the corresponding interval for generalization error. These intervals quantify uncertainty due to the finite held-out test sample conditional on a fitted model, not variation across different random training seeds.
+
+\begin{table*}[!t]
+\caption{Final Held-Out CIFAR-100 Results. A/B denote the joint hyperparameter settings in Table~\ref{tab:hyperparams}. Confidence intervals are 95\% Wilson intervals. Test loss includes applicable L2 regularization.}
+\label{tab:results}
+\centering
+\small
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{lrrrrrrr}
+\toprule
+Model &
+Epochs / Best &
+Min. Val. Loss &
+Test Loss &
+Top-1 (\%) &
+Top-1 CI (\%) &
+Error CI (\%) &
+Top-5 (\%) \\
+\midrule
+
+Compact A
+& 104 / 96
+& 2.3074
+& 2.3074
+& 39.91
+& [38.95, 40.87]
+& [59.13, 61.05]
+& 73.16 \\
+
+Compact B
+& 98 / 90
+& 2.8210
+& 2.8238
+& 29.23
+& [28.35, 30.13]
+& [69.87, 71.65]
+& 62.15 \\
+
+\textbf{Deep A}
+& \textbf{108 / 100}
+& \textbf{1.5198}
+& \textbf{1.5098}
+& \textbf{61.99}
+& \textbf{[61.03, 62.94]}
+& \textbf{[37.06, 38.97]}
+& \textbf{87.81} \\
+
+Deep B
+& 116 / 108
+& 1.7268
+& 1.7070
+& 56.22
+& [55.25, 57.19]
+& [42.81, 44.75]
+& 85.40 \\
+
+\bottomrule
+\end{tabular}
+\end{table*}
+
+
+\subsection{Best model and architecture effect}
+
+Deep A has both the lowest minimum validation loss, 1.5198, and the strongest held-out performance. It correctly classifies 6,199 of 10,000 test images, corresponding to 61.99\% top-1 accuracy and 38.01\% generalization error. Its 95\% Wilson accuracy interval is 61.03--62.94\%, while the corresponding generalization-error interval is 37.06--38.97\%. Deep A also achieves 87.81\% top-5 accuracy.
+
+The difference between Deep A's top-5 and top-1 accuracy is 25.82 percentage points. Thus, many examples that are not ranked correctly at position one still place the true class within the model's five most likely classes, which is useful for interpreting performance on a 100-class fine-grained problem.
+
+Architecture capacity has a large effect under both hyperparameter settings. Under Setting A, Deep exceeds Compact by $61.99-39.91=22.08$ percentage points; under Setting B, the difference is $56.22-29.23=26.99$ points. Thus, the deeper, wider network substantially outperforms Compact under both settings. Because the architectures differ simultaneously in depth, width, dense-layer size, pooling stages, and dropout placement, the result supports the higher-capacity architecture as a whole rather than depth alone.
+
+
+\subsection{Effect of hyperparameters and regularization}
+
+Setting A outperforms Setting B for both architectures. For Compact, top-1 accuracy decreases from 39.91\% to 29.23\%, a reduction of 10.68 percentage points. For Deep, accuracy decreases from 61.99\% to 56.22\%, a reduction of 5.77 points.
+
+The training curves in Fig.~\ref{fig:curves} show the same overall pattern: A achieves lower loss and stronger accuracy than B for both architectures. Setting B combines a smaller initial learning rate with increased dropout and stronger L2 regularization, and its lower training performance, particularly for Compact, is consistent with stronger optimization constraints and/or underfitting.
+
+However, learning rate, dropout, and L2 strength change simultaneously between A and B. These experiments therefore establish the effect of the \emph{joint configuration} but cannot identify which individual hyperparameter primarily causes the difference. Isolating those effects would require varying one factor at a time.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.96\textwidth]{training_curves.png}
+\caption{Training and validation behavior for all four runs. The left panel shows cross-entropy loss including L2 penalties and the right panel shows accuracy. Solid lines denote training metrics and dashed lines denote validation metrics. Deep A converges to the strongest overall accuracy and lowest loss, while the joint stronger-regularization/lower-learning-rate B settings trail their A counterparts.}
+\label{fig:curves}
+\end{figure*}
+
+The curves also provide evidence about overfitting. Deep A develops a modest train--validation accuracy gap while validation performance remains stable, indicating some overfitting without severe divergence; augmentation, dropout, L2 penalties, BN, learning-rate reduction, and early stopping help constrain it. Validation accuracy exceeds training accuracy in several runs because augmentation and dropout are active during training but disabled during validation. Compact B instead shows low training and validation performance with little separation, which is more consistent with limited capacity and strong constraints than classical overfitting.
+
+
+\subsection{Normalized confusion matrices}
+
+For each architecture, we analyze the best validation-selected setting, which is Setting A in both cases. The confusion matrix is row-normalized as
+
+\begin{equation}
+\widetilde{C}_{ij}
+=
+\frac{C_{ij}}
+{\sum_j C_{ij}},
+\end{equation}
+
+so every row sums to one. Entry $\widetilde{C}_{ij}$ is the fraction of true class $i$ predicted as class $j$, and diagonal entries represent class-specific recall. Because each CIFAR-100 test class contains 100 images, one correctly classified image contributes 0.01 to that class's diagonal recall.
+
+\begin{figure*}[!t]
+\centering
+\begin{minipage}{0.49\textwidth}
+\centering
+\includegraphics[width=\linewidth]{compact_normalized_confusion_matrix.png}
+\end{minipage}
+\hfill
+\begin{minipage}{0.49\textwidth}
+\centering
+\includegraphics[width=\linewidth]{deep_normalized_confusion_matrix.png}
+\end{minipage}
+\caption{Row-normalized test confusion matrices for Compact A (left) and Deep A (right). Rows are true classes and columns are predicted classes; diagonal values represent class recall. Deep A shows substantially stronger diagonal structure, consistent with its higher top-1 accuracy.}
+\label{fig:confusions}
+\end{figure*}
+
+Deep A shows a stronger and more continuous diagonal than Compact A, indicating improved discrimination across many classes rather than only a small subset. Both matrices retain off-diagonal responses, reflecting residual confusion among visually similar low-resolution CIFAR-100 categories. Thus, the confusion analysis supports the aggregate accuracy advantage while showing that fine-grained errors remain.
+
+
+\section{Integrated Gradients Analysis}
+
+\subsection{Method and example-selection criterion}
+
+Integrated Gradients provides a feature-attribution method for relating a selected model output to input pixels \cite{ig}. For input $x$, baseline $x'$, and target class output $F_c$, the attribution for feature $j$ is
+
+\begin{equation}
+\operatorname{IG}_j(x)
+=
+(x_j-x'_j)
+\int_0^1
+\frac{
+\partial F_c
+\left(
+x'
++
+\alpha(x-x')
+\right)
+}{
+\partial x_j
+}
+\,d\alpha.
+\end{equation}
+
+The implementation uses a black-image baseline $x'=0$, the softmax probability of the predicted class as the target output, and 64 trapezoidal integration intervals. For visualization, absolute attribution magnitudes are summed across the three RGB channels and each heatmap is normalized by its own maximum. Bright pixels therefore indicate large attribution magnitude relative to that image, but brightness cannot be quantitatively compared across examples.
+
+Examples are selected using an explicit rule rather than manually choosing visually interesting cases. The procedure scans classes and selects a shared true class with at least two correct predictions and one error, then chooses the highest-confidence correct, lowest-confidence correct, and highest-confidence misclassified examples. The resulting shared true class is \emph{apple}, with test indices 7331, 6168, and 8905, respectively.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.76\textwidth]{integrated_gradients_examples.png}
+\caption{Integrated Gradients for Deep A using three true-\emph{apple} examples selected by confidence and correctness: highest-confidence correct (99.98\%), lowest-confidence correct (26.60\%), and highest-confidence error, predicted \emph{pear} (96.17\%). Columns show the input, normalized absolute IG magnitude, and overlay.}
+\label{fig:ig}
+\end{figure*}
+
+
+\subsection{Attribution-map interpretation}
+
+\textit{High-confidence correct apple (99.98\%).}
+The first example is correctly classified as apple with probability 0.99984. The strongest attribution is concentrated over visually salient regions of the apple, particularly the central and upper portions of the fruit. The overlay indicates that the model's prediction is highly sensitive to pixels associated with the object itself rather than being uniformly distributed over the image. This is consistent with a decisive object-focused classification, although the map alone does not prove that the model has learned a semantic concept of ``apple.''
+
+\textit{Low-confidence correct apple (26.60\%).}
+The second image is correctly classified as apple with probability 0.26599. Attribution remains substantially aligned with the fruit, but sensitivity is broader and more distributed across the visible object and surrounding structure than in the high-confidence case. The model therefore reaches the correct class while assigning substantial probability to competing alternatives. The attribution pattern is consistent with a less decisive representation but does not establish that background clutter or any single visual property caused the lower confidence.
+
+\textit{High-confidence apple-to-pear error (96.17\%).}
+The third image has true label apple but is predicted as pear with probability 0.96169. The strongest attribution lies over the central fruit region rather than an irrelevant background region. This demonstrates that focusing on a visually relevant part of an image does not guarantee a correct fine-grained classification. The model is sensitive to the object but maps the visual evidence to the wrong fruit category. Similar appearance between apples and pears may contribute, but the map cannot establish a specific causal color, shape, or texture mechanism.
+
+IG must be interpreted cautiously. Absolute-value maps discard attribution direction, while per-image scaling prevents magnitude comparisons between examples. The black baseline may not be neutral for all CIFAR-100 images, and softmax saturation may affect highly confident predictions. No alternative-baseline, signed-attribution, or completeness analysis is performed; therefore, IG is treated as descriptive evidence of model sensitivity rather than a causal explanation.
+
+
+\section{Strengths and Limitations}
+
+Strengths include training from scratch on a balanced reproducible split, comparing two substantially different model capacities under two hyperparameter settings, and using complementary regularization through augmentation, dropout, L2, BN, learning-rate reduction, and early stopping. All four final runs satisfy the full patience-8 stopping condition. Evaluation combines top-1/top-5 accuracy, test loss, Wilson confidence intervals, normalized confusion matrices, learning curves, and Integrated Gradients.
+
+Limitations include use of a single random seed, so Wilson intervals capture test-sample uncertainty but not retraining variability. Learning rate, dropout, and L2 change jointly between A and B, preventing isolation of individual effects. Only two architecture families are tested, the Deep network is substantially more computationally expensive, and IG depends on a black baseline, absolute softmax-based attributions, and only three selected examples.
+
+Future work should vary learning rate, dropout, and L2 independently around Deep A, repeat promising settings across multiple seeds, isolate architectural effects such as depth and width, and extend attribution analysis using signed IG, alternative baselines, and completeness checks.
+
+
+\section{Conclusion}
+
+This project compared Compact and Deep CNNs trained from scratch for CIFAR-100 classification. Deep A is the strongest model, achieving 61.99\% top-1 test accuracy (95\% Wilson CI: 61.03--62.94\%), 38.01\% generalization error (95\% CI: 37.06--38.97\%), and 87.81\% top-5 accuracy. Deep exceeds Compact by 22.08 percentage points under Setting A and 26.99 points under Setting B. Setting A also outperforms the joint lower-learning-rate, stronger-regularization Setting B for both architectures, although the experiment cannot isolate the contribution of each changed hyperparameter. All runs satisfy the patience-8 validation-based stopping criterion.
+
+Normalized confusion matrices confirm stronger class-level discrimination for Deep A while retaining fine-grained errors. Integrated Gradients further shows that relevant object regions can drive both correct and incorrect predictions, including a highly confident apple-to-pear error. Overall, increased representational capacity substantially benefits CIFAR-100 classification, while regularization, uncertainty reporting, per-class evaluation, and attribution analysis provide important context beyond aggregate accuracy.
+
+
+\begin{thebibliography}{2}
+
+\bibitem{cifar}
+A. Krizhevsky,
+``Learning multiple layers of features from tiny images,''
+University of Toronto, Tech. Rep., 2009.
+[Online]. Available:
+\url{https://www.cs.toronto.edu/~kriz/cifar.html}
+
+\bibitem{ig}
+M. Sundararajan, A. Taly, and Q. Yan,
+``Axiomatic attribution for deep networks,''
+in \emph{Proc. 34th International Conference on Machine Learning (ICML)},
+vol. 70, 2017, pp. 3319--3328.
+
+\end{thebibliography}
+
+\end{document}
